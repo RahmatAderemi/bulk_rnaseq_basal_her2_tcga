@@ -42,14 +42,14 @@ I observed some overlap between the HER2 and Basal data as observed in the PCA. 
 
 # Differential Gene Expression Analysis-
 Using DESeq, I ran DGE on the samples. 
-###Normal vs Basal
+### Normal vs Basal
 adjusted p-value < 0.1
 LFC > 0 (up)       : 22788, 41%
 LFC < 0 (down)     : 10760, 20%
 outliers [1]       : 0, 0%
 low counts [2]     : 8547, 16%
 
-###Normal vs HER2
+### Normal vs HER2
 out of 55095 with nonzero total read count
 adjusted p-value < 0.1
 LFC > 0 (up)       : 14669, 27%
@@ -60,7 +60,7 @@ low counts [2]     : 9615, 17%
 [1] see 'cooksCutoff' argument of ?results
 [2] see 'independentFiltering' argument of ?results
 
-###HER2 vs Basal
+### HER2 vs Basal
 out of 55095 with nonzero total read count
 adjusted p-value < 0.1
 LFC > 0 (up)       : 8002, 15%
