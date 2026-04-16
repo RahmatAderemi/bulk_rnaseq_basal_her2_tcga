@@ -85,8 +85,10 @@ ddSE <- DESeqDataSet(filtered_data, design = ~condition)
 keep <- rowSums(counts(ddSE))>=10
 ddSE <- ddSE[keep,]
 
+ddSE <- readRDS("ddSE.rds")
 #4. Normalization
 dds<- estimateSizeFactors(ddSE)
+saveRDS(dds, "dds.rds")
 plot(sizeFactors(dds), colSums(counts(dds)), 
      xlab = "Size Factors", 
      ylab= "Total Counts", 
@@ -314,3 +316,5 @@ sessionInfo()
 # [45] httr_1.4.8              affyio_1.76.0           hms_1.1.4               DNAcopy_1.80.0         
 # [49] rlang_1.1.6             Rcpp_1.1.0              glue_1.8.0              BiocManager_1.30.27    
 # [53] rstudioapi_0.18.0       jsonlite_2.0.0          R6_2.6.1                zlibbioc_1.52.0
+
+
