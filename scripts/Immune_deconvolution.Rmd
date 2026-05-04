@@ -1,0 +1,230 @@
+---
+title: "Immune_cell_deconvolution"
+output: html_document
+date: "2026-04-11"
+---
+
+```{r cars}
+## 1. Get Normalized Counts from DESeq2 object
+library(tidyverse)
+dds <- readRDS("dds.rds")
+counts_norm <- counts(dds, normalized=TRUE)
+```
+
+```{r}
+## 2. Add Gene Symbols
+expr_df <- data.frame(Symbol = rowData(dds)$gene_name, counts_norm)%>%
+  filter(!is.na(Symbol) & Symbol != "") %>%
+  group_by(Symbol) %>%
+  summarise(across(everything(), mean))%>%
+  column_to_rownames("Symbol")
+
+expr_df <- readRDS("expr_df.rds")
+expr_df
+```
+```{r}
+
+## 3. Run Deconvolution (using 'epic'). EPIC is excellent for identifying B cells, CD4 T cells, CD8 T cells, Endothelial cells, Macrophages, and NK cells.
+# if (!require("remotes", quietly = TRUE)) install.packages("remotes")
+# library(remotes)
+# remotes::install_github("dviraran/xCell")
+# remotes::install_github("cansysbio/ConsensusTME") 
+# remotes::install_github("omnideconv/immunedeconv")
+
+library(immunedeconv)
+res <- deconvolute(as.matrix(expr_df), "epic")
+head(res)
+```
+```{r}
+# 4. Add 'condition' metadata for the plot
+library(tidyverse)
+meta <- as.data.frame(colData(dds))
+
+if(!"sample" %in% colnames(meta)){
+  meta <- meta %>% rownames_to_column("sample")
+}
+head(meta)
+```
+```{r}
+plot_data <- res %>%
+  pivot_longer(cols = -cell_type, names_to = "sample", values_to = "score") %>%
+  left_join(meta, by = "sample")
+plot_data
+```
+```{r}
+# 5. Plot the Immune Landscape
+ggplot(plot_data, aes(x = condition, y = score, fill = condition)) +
+  geom_boxplot() +
+  facet_wrap(~cell_type, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Immune Landscape (EPIC Method)", y = "Estimated Fraction")
+```
+```{r}
+head(unique(plot_data$sample))
+```
+```{r}
+head(unique(meta$sample))
+```
+```{r}
+plot_data$sample_clean <- gsub("-", ".", plot_data$sample)
+meta$sample_clean <- gsub("-", ".", meta$sample)
+```
+
+```{r}
+plot_data_final <- plot_data %>%
+  select(sample_clean, cell_type, score) %>%  # Keep only the essentials
+  left_join(meta %>% select(sample_clean, condition), by = "sample_clean")
+
+# 3. Check if NA is gone
+summary(as.factor(plot_data_final$condition))
+```
+```{r}
+clean_tcga <- function(x) {
+  x <- gsub("-", ".", x)        # Convert dashes to dots
+  x <- gsub("^X", "", x)        # Remove leading 'X' if it exists
+  x <- substr(x, 1, 12)         # Keep only the first 12 characters (Patient ID)
+  return(x)
+}
+
+# Apply to EPIC results
+plot_data$sample_clean <- clean_tcga(plot_data$sample)
+
+# Apply to Metadata
+meta$sample_clean <- clean_tcga(meta$sample)
+
+# Re-run the join
+plot_data_final <- plot_data %>%
+  select(sample_clean, cell_type, score) %>% 
+  left_join(meta %>% select(sample_clean, condition) %>% distinct(), by = "sample_clean")
+```
+```{r}
+print(table(plot_data_final$condition, useNA = "always"))
+```
+```{r}
+ggplot(plot_data_final, aes(x = condition, y = score, fill = condition)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.3, size = 1) +
+  facet_wrap(~cell_type, scales = "free_y") +
+  theme_bw() +
+  scale_fill_manual(values = c("Normal" = "#999999", "Basal" = "#E41A1C", "HER2" = "#377EB8")) +
+  labs(title = "Immune Landscape: HER2 vs Basal vs Normal",
+       subtitle = "Method: EPIC Deconvolution",
+       y = "Estimated Cell Fraction",
+       x = "Group")
+```
+# IMMUNE CHECKPOINT ANALYSIS
+
+```{r}
+library(pheatmap)
+library(tidyverse)
+library(DESeq2)
+
+# 1. Transform the data for visualization (VST is faster and robust)
+vsd <- read_rds("vst.rds")
+vst_mat <- assay(vsd)
+
+# 2. Define your "Exhaustion & Activation" gene list
+# I've added a few more classic ones (IDO1, HAVCR2) to give a fuller picture
+exhaustion_genes <- c("CD274", "PDCD1", "LAG3", "TIGIT", "CTLA4", "HAVCR2", "IDO1", "CD270")
+
+# 3. Filter the matrix for these genes
+# We use 'gene_name' from rowData to match your earlier steps
+genes_in_data <- rowData(dds)$gene_name # Use the exact column name you used before
+target_rows <- which(genes_in_data %in% exhaustion_genes)
+
+# Subset and set symbols as rownames
+plot_mat <- vst_mat[target_rows, ]
+rownames(plot_mat) <- genes_in_data[target_rows]
+
+anno_col <- as.data.frame(colData(dds)[, c("condition"), drop = FALSE])
+
+# 5. Plot the heatmap
+pheatmap(plot_mat, 
+         annotation_col = anno_col, 
+         main = "T-cell Exhaustion & Checkpoint Landscape",
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(100),
+         scale = "row",           # Crucial: Shows relative high/low across samples
+         show_colnames = FALSE,   # Hides messy sample IDs
+         cluster_cols = TRUE,     # Groups samples with similar immune profiles
+         cluster_rows = TRUE,     # Groups similar checkpoint genes
+         border_color = NA)
+```
+IMMUNE DECONVOLUTION OF HER2 AND BASAL
+```{r}
+# 1. Filter dds to keep only Basal and HER2
+# (Make sure 'basal' and 'her2' match the exact spelling in your colData)
+dds_cancer <- dds[, dds$condition %in% c("Basal", "HER2")]
+
+# 2. Drop the 'normal' level so it doesn't show up as an empty spot in plots
+dds_cancer$condition <- droplevels(dds_cancer$condition)
+
+# 3. Extract Normalized Counts for these samples
+counts_subset <- counts(dds_cancer, normalized = TRUE)
+
+# 4. Create the expression matrix (using gene_name from rowData)
+expr_df <- data.frame(Symbol = rowData(dds_cancer)$gene_name, counts_subset) %>%
+  filter(!is.na(Symbol) & Symbol != "") %>%
+  group_by(Symbol) %>%
+  summarise(across(everything(), mean)) %>%
+  column_to_rownames("Symbol")
+head(expr_df)
+```
+```{r}
+res_cancer <- deconvolute(as.matrix(expr_df), "epic")
+```
+```{r}
+# Preparation of metadata
+meta_cancer <- as.data.frame(colData(dds_cancer))
+meta_cancer
+
+```
+
+```{r}
+library(tidyverse)
+
+# 1. Take your results and pivot them
+plot_data <- res_cancer %>%
+  pivot_longer(cols = -cell_type, names_to = "raw_id", values_to = "score")
+
+# 2. Create a 'clean_id' in the results
+plot_data <- plot_data %>%
+  mutate(clean_id = gsub("-", ".", raw_id)) %>%       # Convert dashes to dots
+  mutate(clean_id = gsub("^X", "", clean_id)) %>%    # Remove leading X
+  mutate(clean_id = substr(clean_id, 1, 12))         # Keep first 12 characters
+
+# 3. Create a 'clean_id' in your metadata
+meta_cancer_clean <- meta_cancer %>%
+  mutate(clean_id = gsub("-", ".", sample)) %>%      # Convert dashes to dots
+  mutate(clean_id = gsub("^X", "", clean_id)) %>%    # Remove leading X
+  mutate(clean_id = substr(clean_id, 1, 12)) %>%     # Keep first 12 characters
+  distinct(clean_id, .keep_all = TRUE)               # Remove any duplicates
+
+# 4. Join them
+plot_data_final <- left_join(plot_data, meta_cancer_clean, by = "clean_id")
+
+# 5. VERIFY: This should no longer show all NA
+print(table(plot_data_final$condition, useNA = "always"))
+```
+```{r}
+# Filter out any lingering NAs just in case
+plot_data_final <- plot_data_final %>% filter(!is.na(condition))
+
+#install.packages("ggpubr")
+library(ggpubr)
+
+# Ensure condition is treated as a factor for clean plotting
+plot_data_final$condition <- as.factor(plot_data_final$condition)
+
+ggplot(plot_data_final, aes(x = condition, y = score, fill = condition)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.1, alpha = 0.3, size = 1) +
+  facet_wrap(~cell_type, scales = "free_y") +
+  theme_bw() +
+  # Use lowercase here if your metadata is lowercase!
+  scale_fill_manual(values = c("Basal" = "#E41A1C", "HER2" = "#377EB8")) + 
+  stat_compare_means(method = "wilcox.test", label = "p.signif") +
+  labs(title = "Immune Landscape: HER2 vs BLBC",
+       subtitle = "Wilcoxon Rank Sum Test",
+       y = "Estimated Cell Fraction (EPIC)")
+```
+
